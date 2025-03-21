@@ -4,8 +4,9 @@ RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 && rm -rf 
 
 WORKDIR /app
 COPY common /app/common
-COPY cpu-service/ /app/
+COPY cpu-service/requirements.txt /app/
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY cpu-service/ /app/
 CMD ["python", "cpu_processor.py"]
