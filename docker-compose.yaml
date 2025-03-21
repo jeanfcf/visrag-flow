@@ -1,0 +1,59 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"     # Porta de comunicação AMQP
+      - "15672:15672"   # Dashboard do RabbitMQ
+    environment:
+      RABBITMQ_DEFAULT_USER: user
+      RABBITMQ_DEFAULT_PASS: pass
+
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: ingestion-service/Dockerfile
+    container_name: ingestion-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - CAMERA_URL=rtsp://192.168.15.12:8561/stream0
+      - RABBITMQ_HOST=rabbitmq
+      - FRAMES_QUEUE=frames_queue
+      - RABBITMQ_USER=user
+      - RABBITMQ_PASS=pass
+
+  cpu-service:
+    build:
+      context: .
+      dockerfile: cpu-service/Dockerfile
+    container_name: cpu-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - FRAMES_QUEUE=frames_queue
+      - GPU_TASKS_QUEUE=gpu_tasks_queue
+      - RABBITMQ_USER=user
+      - RABBITMQ_PASS=pass
+
+  gpu-service:
+    build:
+      context: .
+      dockerfile: gpu-service/Dockerfile
+    container_name: gpu-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - GPU_TASKS_QUEUE=gpu_tasks_queue
+      - RABBITMQ_USER=user
+      - RABBITMQ_PASS=pass
