@@ -163,7 +163,7 @@ def main():
     connection = create_connection_with_retry(RABBITMQ_HOST, RABBITMQ_USER, RABBITMQ_PASS)
     channel = connection.channel()
 
-    channel.queue_declare(queue=ROUTER_QUEUE, durable=True)
+    channel.queue_declare(queue=ROUTER_QUEUE)
     channel.queue_declare(queue=CPU_TASKS_QUEUE)
     channel.queue_declare(queue=CPU_RESPONSE_QUEUE)
     channel.queue_declare(queue=GPU_TASKS_QUEUE)

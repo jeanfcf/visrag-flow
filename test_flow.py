@@ -30,7 +30,7 @@ CONFIG = {
                 },
                 "criteria": {
                     "motion_detected": True,
-                    "motion_duration": 5
+                    "motion_duration": 10
                 }
             },
             {
@@ -43,7 +43,7 @@ CONFIG = {
                 },
                 "criteria": {
                     "object_detected": True,
-                    "object_count": 1
+                    "object_count": 8
                 }
             }
         ]
@@ -96,7 +96,7 @@ def publish_test_frame():
 
     conn = get_connection()
     ch = conn.channel()
-    ch.queue_declare(queue=ROUTER_QUEUE, durable=True)
+    ch.queue_declare(queue=ROUTER_QUEUE)
     ch.basic_publish(
         exchange='',
         routing_key=ROUTER_QUEUE,
