@@ -1,12 +1,13 @@
 version: '3.8'
 
 x-common-environment: &common-env
-  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  LOG_LEVEL:    "${LOG_LEVEL:-INFO}"
   MONITOR_INTERVAL: "${MONITOR_INTERVAL:-5}"
-  LOG_FILE_PATH: "/app/logs/${SERVICE_NAME}.log"
-  RABBITMQ_HOST: "rabbitmq"
-  RABBITMQ_USER: "user"
-  RABBITMQ_PASS: "pass"
+  LOG_FILE_PATH:   "/app/logs/${SERVICE_NAME}.log"
+  RABBITMQ_HOST:   "rabbitmq"
+  RABBITMQ_USER:   "user"
+  RABBITMQ_PASS:   "pass"
+  VISUALIZE:       "${VISUALIZE:-true}"
 
 services:
   rabbitmq:
@@ -35,13 +36,10 @@ services:
     environment:
       <<: *common-env
       SERVICE_NAME: ingestion
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: user
-      RABBITMQ_PASS: pass
-      CAMERA_CONFIG_QUEUE: camera_config_queue
-      ROUTER_QUEUE: router_queue
-      RETRIEVE_QUEUE: retrieve_queue
-      EVIDENCE_RESPONSE_QUEUE: evidence_response_queue
+      CAMERA_CONFIG_QUEUE:      camera_config_queue
+      ROUTER_QUEUE:             router_queue
+      RETRIEVE_QUEUE:           retrieve_queue
+      EVIDENCE_RESPONSE_QUEUE:  evidence_response_queue
     volumes:
       - ./evidences:/app/evidences
       - ./logs/ingestion:/app/logs
@@ -49,28 +47,31 @@ services:
   alerts-service:
     build:
       context: .
-      dockerfile: alerts-service/deploy/default/Dockerfile
+      dockerfile: alerts-service/deploy/__default__/Dockerfile
     container_name: alerts-service
+    network_mode: "host"
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       <<: *common-env
       SERVICE_NAME: alerts
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: user
-      RABBITMQ_PASS: pass
-      ROUTER_QUEUE: router_queue
-      CPU_TASKS_QUEUE: frames_queue
-      CPU_RESPONSE_QUEUE: cpu_response_queue
-      GPU_TASKS_QUEUE: gpu_tasks_queue
-      GPU_RESPONSE_QUEUE: gpu_response_queue
-      RETRIEVE_QUEUE: retrieve_queue
+      # Sobrescreve para usar o broker na própria máquina (host network)
+      RABBITMQ_HOST: "localhost"
+      RABBITMQ_USER: "user"
+      RABBITMQ_PASS: "pass"
+      ROUTER_QUEUE:            router_queue
+      CPU_TASKS_QUEUE:         frames_queue
+      CPU_RESPONSE_QUEUE:      cpu_response_queue
+      GPU_TASKS_QUEUE:         gpu_tasks_queue
+      GPU_RESPONSE_QUEUE:      gpu_response_queue
+      RETRIEVE_QUEUE:          retrieve_queue
       EVIDENCE_RESPONSE_QUEUE: evidence_response_queue
-      WEBHOOK_URL: http://192.168.15.12:8000/webhook
+      WEBHOOK_URL:             http://192.168.15.12:8000/webhook
+      DISPLAY:                 "${DISPLAY}"    # para X11
     volumes:
       - ./logs/alerts:/app/logs
-
+      - /tmp/.X11-unix:/tmp/.X11-unix
   cpu-service:
     build:
       context: .
@@ -82,10 +83,7 @@ services:
     environment:
       <<: *common-env
       SERVICE_NAME: cpu
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: user
-      RABBITMQ_PASS: pass
-      CPU_TASKS_QUEUE: frames_queue
+      CPU_TASKS_QUEUE:    frames_queue
       CPU_RESPONSE_QUEUE: cpu_response_queue
     volumes:
       - ./logs/cpu:/app/logs
@@ -101,10 +99,7 @@ services:
     environment:
       <<: *common-env
       SERVICE_NAME: gpu
-      RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: user
-      RABBITMQ_PASS: pass
-      GPU_TASKS_QUEUE: gpu_tasks_queue
+      GPU_TASKS_QUEUE:    gpu_tasks_queue
       GPU_RESPONSE_QUEUE: gpu_response_queue
     volumes:
       - ./logs/gpu:/app/logs
