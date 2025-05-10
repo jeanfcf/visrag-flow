@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   rabbitmq:
     image: rabbitmq:3-management
@@ -8,8 +10,8 @@ services:
       retries: 5
     container_name: rabbitmq
     ports:
-      - "5672:5672"     # Porta de comunicação AMQP
-      - "15672:15672"   # Dashboard do RabbitMQ
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: pass
@@ -17,43 +19,69 @@ services:
   ingestion-service:
     build:
       context: .
-      dockerfile: ingestion-service/Dockerfile
+      dockerfile: ingestion-service/deploy/default/Dockerfile
     container_name: ingestion-service
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      - CAMERA_URL=rtsp://192.168.15.12:8561/stream0
       - RABBITMQ_HOST=rabbitmq
-      - FRAMES_QUEUE=frames_queue
       - RABBITMQ_USER=user
       - RABBITMQ_PASS=pass
+      - CAMERA_CONFIG_QUEUE=camera_config_queue
+      - ROUTER_QUEUE=router_queue
+      - RETRIEVE_QUEUE=retrieve_queue
+      - EVIDENCE_RESPONSE_QUEUE=evidence_response_queue
+    volumes:
+      - ./evidences:/app/evidences
+
+  alerts-service:
+    build:
+      context: .
+      dockerfile: alerts-service/deploy/default/Dockerfile
+    container_name: alerts-service
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=user
+      - RABBITMQ_PASS=pass
+      - ROUTER_QUEUE=router_queue
+      - CPU_TASKS_QUEUE=frames_queue
+      - CPU_RESPONSE_QUEUE=cpu_response_queue
+      - GPU_TASKS_QUEUE=gpu_tasks_queue
+      - GPU_RESPONSE_QUEUE=gpu_response_queue
+      - RETRIEVE_QUEUE=retrieve_queue
+      - EVIDENCE_RESPONSE_QUEUE=evidence_response_queue
+      - WEBHOOK_URL=http://192.168.15.12:8000/webhook
 
   cpu-service:
     build:
       context: .
-      dockerfile: cpu-service/Dockerfile
+      dockerfile: cpu-service/deploy/moondream2/Dockerfile
     container_name: cpu-service
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - RABBITMQ_HOST=rabbitmq
-      - FRAMES_QUEUE=frames_queue
-      - GPU_TASKS_QUEUE=gpu_tasks_queue
       - RABBITMQ_USER=user
       - RABBITMQ_PASS=pass
+      - CPU_TASKS_QUEUE=frames_queue
+      - CPU_RESPONSE_QUEUE=cpu_response_queue
 
   gpu-service:
     build:
       context: .
-      dockerfile: gpu-service/Dockerfile
+      dockerfile: gpu-service/deploy/__default__/Dockerfile
     container_name: gpu-service
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       - RABBITMQ_HOST=rabbitmq
-      - GPU_TASKS_QUEUE=gpu_tasks_queue
       - RABBITMQ_USER=user
       - RABBITMQ_PASS=pass
+      - GPU_TASKS_QUEUE=gpu_tasks_queue
+      - GPU_RESPONSE_QUEUE=gpu_response_queue

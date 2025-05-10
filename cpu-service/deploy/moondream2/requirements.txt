@@ -1,0 +1,12 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+opencv-python==4.7.0.72
+pika==1.3.1
+psutil==5.9.4
+numpy==1.23.5
+transformers==4.30.2
+Pillow==9.5.0
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+einops==0.8.1
+pyvips==2.2.1
+moondream==1.0.3
