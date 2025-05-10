@@ -55,27 +55,35 @@ def main():
             return
 
         msg = json.loads(body.decode())
+        req_id = msg.get("id")
+        cam_id = msg.get("camera_id")
+        ts     = msg.get("timestamp")
+        pipeline_steps = [s["name"] for s in msg.get("pipeline", [])]
+
+        logger.debug(f"CPUService: [id={req_id}] Received task for camera={cam_id} ts={ts} pipeline={pipeline_steps}")
+
         frame_b64 = msg.get("frame_b64")
-        frame = None
-        if frame_b64:
-            binf = base64.b64decode(frame_b64)
-            arr = np.frombuffer(binf, dtype=np.uint8)
-            frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            logger.warning("CPUService: invalid frame—skipping.")
+        if not frame_b64:
+            logger.warning(f"CPUService: [id={req_id}] invalid frame—skipping.")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
+        binf = base64.b64decode(frame_b64)
+        arr = np.frombuffer(binf, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
         results = {}
-        # executa só os processadores CPU configurados
-        for step in msg.get("pipeline", []):
-            if step.get("name","").lower().startswith("cpu"):
-                proc = step["parameters"].get("processor")
-                if proc == "motion_detection":
-                    thresh = step["parameters"].get("threshold", 30)
-                    results["motion_detection"] = motion_process_frame(frame, threshold=thresh)
-                if proc == "moondream2":
-                    results["moondream2"] = moondream2_process_frame(frame)
+        pipeline = msg.get("pipeline", []).copy()
+        step = pipeline.pop(0)
+        
+        if step["name"].lower().startswith("cpu"):
+            proc = step["parameters"].get("processor")
+            params = step["parameters"]
+            logger.debug(f"CPUService: [id={req_id}] Executing '{proc}' with params {params}")
+            if proc == "motion_detection":
+                results["motion_detection"] = motion_process_frame(frame, threshold=params.get("threshold", 30))
+            elif proc == "moondream2":
+                results["moondream2"] = moondream2_process_frame(frame)
 
         msg["cpu_results"] = results
 
@@ -84,7 +92,7 @@ def main():
             routing_key=CPU_RESPONSE_QUEUE,
             body=json.dumps(msg).encode()
         )
-        logger.debug(f"CPUService: result sent to AlertsService: {results}")
+        logger.info(f"CPUService: [id={req_id}] Published CPU response: {results}")
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     ch.basic_consume(queue=FRAMES_QUEUE, on_message_callback=callback, auto_ack=False)

@@ -6,6 +6,7 @@ import json
 import pika
 import signal
 import datetime
+import uuid
 from collections import deque
 
 from common.logger_config import setup_logger
@@ -71,7 +72,7 @@ def check_retrieve_request(channel):
     if body:
         try:
             req = json.loads(body.decode())
-            logger.info("IngestionService: Evidence retrieve request received.")
+            logger.info(f"IngestionService: Evidence retrieve request received [id={req.get('id')}]")
             return req
         except Exception as e:
             logger.error(f"IngestionService: Error parsing retrieve request: {e}")
@@ -108,7 +109,6 @@ def main():
     conn = create_connection_with_retry(RABBITMQ_HOST, RABBITMQ_USER, RABBITMQ_PASS)
     channel = conn.channel()
 
-    # Declarações de fila (ajuste: router_queue como durable)
     channel.queue_declare(queue=CAMERA_CONFIG_QUEUE)
     channel.queue_declare(queue=ROUTER_QUEUE, durable=True)
     channel.queue_declare(queue=RETRIEVE_QUEUE)
@@ -116,17 +116,14 @@ def main():
 
     cfg = get_initial_camera_config(channel)
     if not cfg:
-        logger.error("IngestionService: No config—exiting.")
         return
 
     camera_cfg = cfg["camera_config"]
     CAMERA_URL    = camera_cfg["rtsp_url"]
     CAMERA_ID     = camera_cfg["camera_id"]
-    frame_buffer  = deque(maxlen=1)  # será redefinido após ler FPS
 
     cap = connect_rtsp_stream(CAMERA_URL)
     if not cap:
-        logger.error("IngestionService: Cannot open RTSP—exiting.")
         return
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 5
@@ -142,7 +139,6 @@ def main():
     while not stop_requested:
         new_cfg = check_for_config_update(channel)
         if new_cfg and new_cfg["camera_config"]["camera_id"] == CAMERA_ID:
-            logger.info("IngestionService: Restarting stream with new config.")
             cap.release()
             CAMERA_URL = new_cfg["camera_config"]["rtsp_url"]
             cap = connect_rtsp_stream(CAMERA_URL)
@@ -156,6 +152,7 @@ def main():
             vid = generate_evidence_video(frame_buffer, path)
             if vid:
                 resp = {
+                    "id": req["id"],
                     "camera_id": CAMERA_ID,
                     "event_type": "evidence_response",
                     "timestamp": time.time(),
@@ -169,7 +166,6 @@ def main():
 
         ret, frame = cap.read()
         if not ret:
-            logger.warning("IngestionService: Frame read error—reconnecting.")
             cap.release()
             time.sleep(2)
             cap = connect_rtsp_stream(CAMERA_URL)
@@ -178,7 +174,9 @@ def main():
         ts = time.time()
         frame_buffer.append((ts, frame))
         _, buf = cv2.imencode(".jpg", frame)
+        request_id = str(uuid.uuid4())
         msg = {
+            "id": request_id,
             "camera_id": CAMERA_ID,
             "timestamp": ts,
             "frame_b64": base64.b64encode(buf).decode(),
@@ -189,6 +187,7 @@ def main():
             routing_key=ROUTER_QUEUE,
             body=json.dumps(msg).encode()
         )
+        logger.debug(f"IngestionService: Published frame [id={request_id}] to router_queue")
 
     cap.release()
     monitor.stop()

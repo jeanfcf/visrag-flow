@@ -23,7 +23,6 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "user")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "pass")
 
 def create_connection_with_retry(host, user, pwd, retries=5, delay=2):
-    import pika
     creds = pika.PlainCredentials(user, pwd)
     for i in range(retries):
         try:
@@ -55,26 +54,36 @@ def main():
             return
 
         msg = json.loads(body.decode())
+        req_id = msg.get("id")
+        cam_id = msg.get("camera_id")
+        ts     = msg.get("timestamp")
+        logger.debug(f"GPUService: [id={req_id}] Received GPU task for camera={cam_id} ts={ts}")
+
         frame_b64 = msg.get("frame_b64", "")
         b = base64.b64decode(frame_b64)
         arr = np.frombuffer(b, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
-            logger.warning("GPUService: invalid frame—skipping.")
+            logger.warning(f"GPUService: [id={req_id}] invalid frame—skipping.")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
-        # encontra o passo GPU e seus parâmetros
-        gpu_steps = [s for s in msg.get("pipeline", []) if s.get("name","").lower().startswith("gpu")]
         results = {}
-        for step in gpu_steps:
-            proc = step["parameters"].get("processor")
+        pipeline = msg.get("pipeline", []).copy()
+        step = pipeline.pop(0)
+        
+        if step["name"].lower().startswith("gpu"):
+            proc   = step["parameters"].get("processor")
+            params = step["parameters"]
+            logger.debug(f"GPUService: [id={req_id}] Executing '{proc}' with params {params}")
             if proc == "yolov5":
                 detections = yolov5_process_frame(frame)
-                target = step["parameters"].get("target", "").lower()
-                thresh = step["parameters"].get("threshold", 0.5)
-                filtered = [d for d in detections
-                            if d.get("name","").lower()==target and d.get("confidence",0)>=thresh]
+                target = params.get("target", "").lower()
+                thresh = params.get("threshold", 0.5)
+                filtered = [
+                    d for d in detections
+                    if d.get("name","").lower() == target and d.get("confidence",0) >= thresh
+                ]
                 results["yolov5"] = filtered
 
         msg["gpu_results"] = results
@@ -84,7 +93,7 @@ def main():
             routing_key=GPU_RESPONSE_QUEUE,
             body=json.dumps(msg).encode()
         )
-        logger.debug(f"GPUService: sent results to AlertsService: {results}")
+        logger.info(f"GPUService: [id={req_id}] Published GPU response: {results}")
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
     ch.basic_consume(queue=GPU_TASKS_QUEUE, on_message_callback=callback, auto_ack=False)

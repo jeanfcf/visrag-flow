@@ -9,6 +9,9 @@ from common.logger_config import setup_logger
 logger = setup_logger("AlertsService")
 stop_requested = False
 
+# Estado para rastrear duração de movimento por câmera
+motion_start_times = {}
+
 # Filas
 ROUTER_QUEUE             = os.getenv("ROUTER_QUEUE", "router_queue")
 CPU_TASKS_QUEUE          = os.getenv("CPU_TASKS_QUEUE", "frames_queue")
@@ -17,28 +20,11 @@ GPU_TASKS_QUEUE          = os.getenv("GPU_TASKS_QUEUE", "gpu_tasks_queue")
 GPU_RESPONSE_QUEUE       = os.getenv("GPU_RESPONSE_QUEUE", "gpu_response_queue")
 RETRIEVE_QUEUE           = os.getenv("RETRIEVE_QUEUE", "retrieve_queue")
 EVIDENCE_RESPONSE_QUEUE  = os.getenv("EVIDENCE_RESPONSE_QUEUE", "evidence_response_queue")
-ALERTS_QUEUE             = os.getenv("ALERTS_QUEUE", "alerts_queue")
 WEBHOOK_URL              = os.getenv("WEBHOOK_URL")
 
 RABBITMQ_HOST  = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_USER  = os.getenv("RABBITMQ_USER", "user")
 RABBITMQ_PASS  = os.getenv("RABBITMQ_PASS", "pass")
-
-# === Cool-down entre alertas ===
-ALERT_COOLDOWN_SECONDS = int(os.getenv("ALERT_COOLDOWN", "60"))
-_last_alert_times = {}  # {(camera_id,event_type): timestamp}
-
-def _should_process_frame(camera_id: str, event_type: str) -> bool:
-    key = f"{camera_id}:{event_type}"
-    now = time.time()
-    last = _last_alert_times.get(key, 0)
-    if now - last >= ALERT_COOLDOWN_SECONDS:
-        # marca início do novo ciclo de processamento/alerta
-        _last_alert_times[key] = now
-        return True
-    logger.debug(f"AlertsService: Frame de {key} descartado por cooldown ({now-last:.1f}s<{ALERT_COOLDOWN_SECONDS}s)")
-    return False
-# ===============================
 
 def create_connection_with_retry(host, user, pwd, retries=5, delay=2):
     creds = pika.PlainCredentials(user, pwd)
@@ -59,88 +45,118 @@ def signal_handler(sig, frame):
     logger.info("AlertsService: Termination signal received.")
     stop_requested = True
 
-def frame_callback(ch, method, props, body):
-    msg = json.loads(body)
-    camera_id  = msg.get("camera_id")
-    event_type = msg.get("event_type", "default")
-    # Novo: verifica cool-down antes de qualquer processamento
-    if not _should_process_frame(camera_id, event_type):
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-        return
-
+def _route_next(ch, msg):
+    req_id = msg.get("id")
     pipeline = msg.get("pipeline", [])
-    logger.debug(f"AlertsService: New frame for routing: {camera_id}")
+    cam_id   = msg["camera_id"]
+    ts       = msg["timestamp"]
 
-    if pipeline:
+    if not pipeline:
+        # Fim: todos critérios satisfeitos
+        req = {
+            "id": req_id,
+            "camera_id": cam_id,
+            "timestamp": ts,
+            "event_type": msg.get("event_type")
+        }
+        ch.basic_publish(exchange="", routing_key=RETRIEVE_QUEUE, body=json.dumps(req).encode())
+        logger.info(f"AlertsService: [id={req_id}] Todos critérios atendidos — evidence requested.")
+    else:
         step = pipeline[0]
         name = step["name"].lower()
+        body = json.dumps(msg).encode()
         if "cpu" in name:
             ch.basic_publish(exchange="", routing_key=CPU_TASKS_QUEUE, body=body)
-            logger.debug("AlertsService: Routed to CPU.")
+            logger.debug(f"AlertsService: [id={req_id}] Routed to CPU → step '{step['name']}'.")
         elif "gpu" in name:
             ch.basic_publish(exchange="", routing_key=GPU_TASKS_QUEUE, body=body)
-            logger.debug("AlertsService: Routed to GPU.")
+            logger.debug(f"AlertsService: [id={req_id}] Routed to GPU → step '{step['name']}'.")
         else:
-            logger.warning("AlertsService: Pipeline step desconhecido.")
-    else:
-        logger.warning("AlertsService: Pipeline vazio—descartando frame.")
+            logger.warning(f"AlertsService: [id={req_id}] Pipeline step desconhecido '{step['name']}'.")
+
+def frame_callback(ch, method, props, body):
+    msg = json.loads(body)
+    req_id = msg.get("id")
+    cam_id = msg["camera_id"]
+    ts     = msg["timestamp"]
+    logger.debug(f"AlertsService: [id={req_id}] Novo frame recebido [camera={cam_id} ts={ts}].")
+    _route_next(ch, msg)
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def cpu_response_callback(ch, method, props, body):
     msg = json.loads(body)
+    req_id   = msg.get("id")
+    cam_id   = msg.get("camera_id")
+    ts       = msg.get("timestamp", time.time())
     pipeline = msg.get("pipeline", [])
-    if pipeline and "cpu" in pipeline[0]["name"].lower():
-        pipeline.pop(0)
+    step     = pipeline.pop(0) if pipeline and "cpu" in pipeline[0]["name"].lower() else {}
     msg["pipeline"] = pipeline
 
-    if pipeline and "gpu" in pipeline[0]["name"].lower():
-        ch.basic_publish(exchange="", routing_key=GPU_TASKS_QUEUE, body=json.dumps(msg).encode())
-        logger.debug("AlertsService: CPU result → routed to GPU.")
+    criteria = step.get("criteria", {})
+    # motion_detected
+    if "motion_detected" in criteria:
+        detected = msg.get("cpu_results", {}).get("motion_detection", False)
+        logger.debug(f"AlertsService: [id={req_id}] CPU result: motion_detected={detected}.")
+        if not detected:
+            motion_start_times.pop(cam_id, None)
+            logger.info(f"AlertsService: [id={req_id}] motion_detected=False → descartando.")
+            return ch.basic_ack(delivery_tag=method.delivery_tag)
+        if cam_id not in motion_start_times:
+            motion_start_times[cam_id] = ts
+        elapsed = ts - motion_start_times[cam_id]
     else:
-        logger.debug("AlertsService: CPU result → sem próximo passo.")
+        elapsed = None
+
+    # motion_duration
+    if "motion_duration" in criteria:
+        req_dur = criteria["motion_duration"]
+        logger.debug(f"AlertsService: [id={req_id}] elapsed={elapsed:.1f}s, required={req_dur}s.")
+        if elapsed is None or elapsed < req_dur:
+            logger.info(f"AlertsService: [id={req_id}] motion_duration={elapsed:.1f}s < {req_dur}s → descartando.")
+            return ch.basic_ack(delivery_tag=method.delivery_tag)
+        # ─── movimento validado, enviou evidence ───
+        # reset para não disparar de novo até este movimento parar
+        motion_start_times.pop(cam_id, None)
+        # e, opcionalmente, marque "alert_sent" pra este cam_id
+    _route_next(ch, msg)
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def gpu_response_callback(ch, method, props, body):
     msg = json.loads(body)
+    req_id   = msg.get("id")
     pipeline = msg.get("pipeline", [])
-    criteria = {}
-    if pipeline and "gpu" in pipeline[0]["name"].lower():
-        criteria = pipeline[0].get("criteria", {})
-        pipeline.pop(0)
+    step     = pipeline.pop(0) if pipeline and "gpu" in pipeline[0]["name"].lower() else {}
     msg["pipeline"] = pipeline
 
-    gpu_res = msg.get("gpu_results", {})
-    count = gpu_res.get("yolov5", [])
-    threshold = criteria.get("object_count", 0)
-    if len(count) >= threshold:
-        # remarca último alerta para manter cooldown
-        key = f"{msg['camera_id']}:{msg.get('event_type','default')}"
-        _last_alert_times[key] = time.time()
-        req = {
-            "camera_id": msg["camera_id"],
-            "timestamp": msg.get("timestamp", time.time()),
-            "event_type": msg.get("event_type")
-        }
-        ch.basic_publish(exchange="", routing_key=RETRIEVE_QUEUE, body=json.dumps(req).encode())
-        logger.info("AlertsService: Valid alert—evidence requested.")
-    else:
-        logger.info("AlertsService: GPU result abaixo do threshold—sem alerta.")
+    criteria = step.get("criteria", {})
+    if "object_count" in criteria:
+        results = msg.get("gpu_results", {}).get("yolov5", [])
+        count   = len(results)
+        req_count = criteria["object_count"]
+        logger.debug(f"AlertsService: [id={req_id}] object_count={count}, required={req_count}.")
+        if count < req_count:
+            logger.info(f"AlertsService: [id={req_id}] object_count={count} < {req_count} → descartando.")
+            return ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    _route_next(ch, msg)
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def evidence_response_callback(ch, method, props, body):
     ev = json.loads(body)
+    req_id = ev.get("id")
     alert = {
+        "id": req_id,
         "camera_id": ev["camera_id"],
         "event_type": ev["event_type"],
         "timestamp": ev["timestamp"],
-        "evidence": ev["evidence"]
+        "evidence": ev.get("evidence")
     }
     try:
         r = requests.post(WEBHOOK_URL, json=alert, timeout=5)
         r.raise_for_status()
-        logger.info("AlertsService: Webhook enviado com sucesso.")
+        logger.info(f"AlertsService: [id={req_id}] Webhook enviado com sucesso.")
     except Exception as e:
-        logger.error(f"AlertsService: Falha ao enviar webhook: {e}")
+        logger.error(f"AlertsService: [id={req_id}] Falha ao enviar webhook: {e}")
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def main():
@@ -155,9 +171,9 @@ def main():
     channel.queue_declare(queue=RETRIEVE_QUEUE)
     channel.queue_declare(queue=EVIDENCE_RESPONSE_QUEUE)
 
-    channel.basic_consume(queue=ROUTER_QUEUE,            on_message_callback=frame_callback)
-    channel.basic_consume(queue=CPU_RESPONSE_QUEUE,      on_message_callback=cpu_response_callback)
-    channel.basic_consume(queue=GPU_RESPONSE_QUEUE,      on_message_callback=gpu_response_callback)
+    channel.basic_consume(queue=ROUTER_QUEUE, on_message_callback=frame_callback)
+    channel.basic_consume(queue=CPU_RESPONSE_QUEUE, on_message_callback=cpu_response_callback)
+    channel.basic_consume(queue=GPU_RESPONSE_QUEUE, on_message_callback=gpu_response_callback)
     channel.basic_consume(queue=EVIDENCE_RESPONSE_QUEUE, on_message_callback=evidence_response_callback)
 
     signal.signal(signal.SIGINT,  signal_handler)
