@@ -4,7 +4,12 @@ RUN apt-get update && apt-get install -y python3 python3-pip git && rm -rf /var/
 WORKDIR /app
 COPY common /app/common
 RUN pip install --no-cache-dir -r common/requirements.txt
-COPY gpu-service/deploy/__default__/requirements.txt /app/
+COPY gpu-service/deploy/default/requirements.txt /app/
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+# ➜ copia lista de processors
+COPY gpu-service/deploy/default/processors.json /app/
+ENV PROCESSORS_FILE=/app/processors.json
+
 COPY gpu-service/ /app/
 CMD ["python3", "gpu_processor.py"]

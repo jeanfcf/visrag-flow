@@ -25,12 +25,15 @@ CONFIG = {
                 "name": "cpu-step",
                 "version": "1.0",
                 "parameters": {
-                    "processor": "motion_detection",
+                    "processor": "motion",
                     "threshold": 10
                 },
-                "criteria": {
-                    "motion_detected": True,
-                    "motion_duration": 10
+                "rule": {
+                    "name": "motion",
+                    "criteria": {
+                        "detected": True,
+                        "duration": 10
+                    }
                 }
             },
             {
@@ -41,9 +44,11 @@ CONFIG = {
                     "target": "person",
                     "threshold": 0.5
                 },
-                "criteria": {
-                    "object_detected": True,
-                    "object_count": 8
+                "rule": {
+                    "name": "object_detection",
+                    "criteria": {
+                        "count": 5
+                    }
                 }
             }
         ]

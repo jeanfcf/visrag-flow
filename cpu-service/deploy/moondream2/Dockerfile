@@ -15,6 +15,10 @@ RUN pip install --no-cache-dir -r common/requirements.txt
 COPY cpu-service/deploy/moondream2/requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ➜ copia lista de processors
+COPY cpu-service/deploy/moondream2/processors.json /app/
+ENV PROCESSORS_FILE=/app/processors.json
+
 COPY cpu-service/ /app/
 
 CMD ["python", "cpu_processor.py"]

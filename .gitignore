@@ -1,2 +1,5 @@
 cpu-service/models/
 logs
+t.py
+*.txt
+evidences

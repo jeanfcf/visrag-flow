@@ -16,7 +16,11 @@ RUN pip install --no-cache-dir -r common/requirements.txt
 COPY alerts-service/deploy/headless/requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alerts-service/alerts_router.py /app/
+# ➜ copia lista de rules
+COPY alerts-service/deploy/headless/rules.json /app/
+ENV RULES_FILE=/app/rules.json
+
+COPY alerts-service/ /app/
 
 ENV VISUALIZE=false
 CMD ["python", "alerts_router.py"]

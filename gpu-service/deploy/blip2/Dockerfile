@@ -5,5 +5,9 @@ COPY common /app/common
 RUN pip install --no-cache-dir -r common/requirements.txt
 COPY gpu-service/deploy/blip2/requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
+# ➜ copia lista de processors
+COPY gpu-service/deploy/blip2/processors.json /app/
+ENV PROCESSORS_FILE=/app/processors.json
+
 COPY gpu-service/ /app/
 CMD ["python", "gpu_processor.py"]

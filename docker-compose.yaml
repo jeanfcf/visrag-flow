@@ -34,12 +34,12 @@ services:
       rabbitmq:
         condition: service_healthy
     environment:
-      <<: *common-env
       SERVICE_NAME: ingestion
       CAMERA_CONFIG_QUEUE:      camera_config_queue
       ROUTER_QUEUE:             router_queue
       RETRIEVE_QUEUE:           retrieve_queue
       EVIDENCE_RESPONSE_QUEUE:  evidence_response_queue
+      <<: *common-env
     volumes:
       - ./evidences:/app/evidences
       - ./logs/ingestion:/app/logs
@@ -47,14 +47,13 @@ services:
   alerts-service:
     build:
       context: .
-      dockerfile: alerts-service/deploy/__default__/Dockerfile
+      dockerfile: alerts-service/deploy/default/Dockerfile
     container_name: alerts-service
     network_mode: "host"
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      <<: *common-env
       SERVICE_NAME: alerts
       # Sobrescreve para usar o broker na própria máquina (host network)
       RABBITMQ_HOST: "localhost"
@@ -69,37 +68,38 @@ services:
       EVIDENCE_RESPONSE_QUEUE: evidence_response_queue
       WEBHOOK_URL:             http://192.168.15.12:8000/webhook
       DISPLAY:                 "${DISPLAY}"    # para X11
+      <<: *common-env
     volumes:
       - ./logs/alerts:/app/logs
       - /tmp/.X11-unix:/tmp/.X11-unix
   cpu-service:
     build:
       context: .
-      dockerfile: cpu-service/deploy/moondream2/Dockerfile
+      dockerfile: cpu-service/deploy/default/Dockerfile
     container_name: cpu-service
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      <<: *common-env
       SERVICE_NAME: cpu
       CPU_TASKS_QUEUE:    frames_queue
       CPU_RESPONSE_QUEUE: cpu_response_queue
+      <<: *common-env
     volumes:
       - ./logs/cpu:/app/logs
 
   gpu-service:
     build:
       context: .
-      dockerfile: gpu-service/deploy/__default__/Dockerfile
+      dockerfile: gpu-service/deploy/default/Dockerfile
     container_name: gpu-service
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
-      <<: *common-env
       SERVICE_NAME: gpu
       GPU_TASKS_QUEUE:    gpu_tasks_queue
       GPU_RESPONSE_QUEUE: gpu_response_queue
+      <<: *common-env
     volumes:
       - ./logs/gpu:/app/logs

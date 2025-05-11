@@ -18,10 +18,14 @@ WORKDIR /app
 COPY common /app/common
 RUN pip install --no-cache-dir -r common/requirements.txt
 
-COPY alerts-service/deploy/__default__/requirements.txt /app/requirements.txt
+COPY alerts-service/deploy/default/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alerts-service/alerts_router.py /app/
+# ➜ copia lista de rules
+COPY alerts-service/deploy/default/rules.json /app/
+ENV RULES_FILE=/app/rules.json
+
+COPY alerts-service/ /app/
 
 ENV VISUALIZE=true
 # expomos o DISPLAY do host

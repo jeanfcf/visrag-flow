@@ -7,7 +7,7 @@ import os
 def setup_logger(name):
     # Nível e formatos vindos de env
     level     = os.getenv("LOG_LEVEL", "INFO").upper()
-    fmt       = os.getenv("LOG_FMT", "%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    fmt       = os.getenv("LOG_FMT","%(asctime)s [%(levelname)s] %(name)s:%(funcName)s:%(lineno)d ▶ %(message)s")
     datef     = os.getenv("LOG_DATEFMT", "%Y-%m-%d %H:%M:%S")
     file_path = os.getenv("LOG_FILE_PATH", "/app/logs/service.log")
 
